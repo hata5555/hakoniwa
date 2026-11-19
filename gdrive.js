@@ -422,7 +422,7 @@ function merge(remote){
       const was = !!le && !le.d, now = !re.d;
       DOCS.set(p, re.d ? {t: re.t, d: 1} : {v: re.v, t: re.t}); persist(p);
       if (re.t > lastStamp) lastStamp = re.t;
-      if (p.startsWith('_files/')) assets = true;
+      if (p.startsWith('_files/')) { assets = true; BROKEN.delete(p.slice(7)); }   /* 原本が直されたかも → もう一度確かめる */
       if (!p.startsWith('_') && (was || now)) changes.set(p, {type: !now ? 'removed' : was ? 'modified' : 'added', old: le && le.v});
     } else if (le.t > re.t && !le.u) { le.u = 1; persist(p); }
   }
@@ -500,7 +500,19 @@ async function solid(blob, type){
   if (blob.size > SOLID_MAX) return blob;
   return new Blob([await blob.arrayBuffer()], {type: t});
 }
-const BROKEN = new Set();           /* Driveの原本が壊れてる（大きさが記録と違う）もの */
+const BROKEN = new Set();           /* Driveの原本が壊れてる（大きさが記録と違う・中身が画像じゃない）もの */
+const DSIZE = new Map();            /* 点検したときの Drive 上の大きさ */
+/* 中身の先頭を見て、記録どおりの種類か確かめる（zipが画像として入ってる、などを見つける） */
+async function looksRight(blob, mime){
+  try {
+    if (!mime || !blob || !blob.size) return !!blob;
+    const h = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
+    const is = (o, ...b) => b.every((v, i) => h[o + i] === v);
+    if (/^image\//.test(mime)) return is(0, 0x89, 0x50, 0x4e, 0x47) || is(0, 0xff, 0xd8) || is(0, 0x47, 0x49, 0x46) || (is(0, 0x52, 0x49, 0x46, 0x46) && is(8, 0x57, 0x45, 0x42, 0x50)) || is(0, 0x42, 0x4d) || is(4, 0x66, 0x74, 0x79, 0x70);
+    if (mime === 'application/pdf') return is(0, 0x25, 0x50, 0x44, 0x46);
+    return true;
+  } catch(e){ return true; }
+}
 async function storeBlob(id, blob, type, pending){
   const want = blob.size;
   blob = await solid(blob, type);
@@ -564,7 +576,7 @@ function resolveAsset(id){
     const rec = await idbGet('blobs', id).catch(() => null);
     const f = fileDoc(id);
     if (rec && rec.blob) {
-      if (rec.pending || !f || !f.size || rec.blob.size === f.size) { if (!rec.pending) { rec.at = Date.now(); idbPut('blobs', id, rec).catch(() => {}); } return objUrl(id, rec.blob); }
+      if (rec.pending || !f || ((!f.size || rec.blob.size === f.size) && await looksRight(rec.blob, f.mime))) { if (!rec.pending) { rec.at = Date.now(); idbPut('blobs', id, rec).catch(() => {}); } return objUrl(id, rec.blob); }
       await idbDel('blobs', id).catch(() => {});      /* 壊れた写し → 捨ててDriveから取り直す */
     }
     if (!f || !f.f || !tokenValid() || !navigator.onLine) return null;
@@ -573,7 +585,7 @@ function resolveAsset(id){
     try {
       const r = await api('GET', 'files/' + f.f, {query: {alt: 'media'}, raw: true});
       let b = await r.blob(); if (!b.type && f.mime) b = new Blob([b], {type: f.mime});
-      if (f.size && b.size !== f.size) { BROKEN.add(id); setState(); return null; }   /* Driveの原本が壊れてる */
+      if ((f.size && b.size !== f.size) || !(await looksRight(b, f.mime))) { BROKEN.add(id); setState(); return null; }   /* Driveの原本が壊れてる */
       await storeBlob(id, b, f.mime, false).catch(() => {});
       trimCache();
       return objUrl(id, b);
@@ -604,10 +616,13 @@ function checkOriginals(force){
     await ensureAccount(); await ensureRoot();
     const files = await listFiles('trashed=false');
     const size = new Map(files.map(x => [x.id, x.size]));
-    BROKEN.clear();
+    const keep = new Set([...BROKEN].filter(id => { const f = fileDoc(id); return f && f.f && size.get(f.f) != null && +size.get(f.f) === f.size; }));   /* 大きさは合ってても中身がおかしかったもの */
+    BROKEN.clear(); DSIZE.clear();
+    for (const id of keep) BROKEN.add(id);
     for (const [p, e] of DOCS) {
       if (!p.startsWith('_files/') || e.d || !e.v || !e.v.f || !e.v.size) continue;
       const sz = size.get(e.v.f);
+      if (sz != null) DSIZE.set(p.slice(7), +sz);
       if (sz != null && +sz !== e.v.size) BROKEN.add(p.slice(7));
     }
     setState();
@@ -619,26 +634,31 @@ function checkOriginals(force){
 async function repairOriginals(source, onStep){
   if (!tokenValid()) throw authErr();
   await checkOriginals(true);
-  const ids = [...BROKEN]; let fixed = 0, miss = 0, k = 0;
+  const ids = [...BROKEN]; let fixed = 0, miss = 0, k = 0; const misses = [];
   for (const id of ids) {
     k++; try { onStep && onStep(k, ids.length); } catch(e){}
     const f = fileDoc(id); if (!f || !f.f) { BROKEN.delete(id); continue; }
-    let b = null;
-    const rec = await idbGet('blobs', id).catch(() => null);
-    if (rec && rec.blob && rec.blob.size === f.size) b = rec.blob;
-    if (!b && source) b = await Promise.resolve(source(f.size, f.mime)).catch(() => null);
-    if (!b || b.size !== f.size) { miss++; continue; }
-    b = await solid(b, f.mime);
+    let b = null, how = '';
+    if (source) {
+      const got = await Promise.resolve(source(f.size, f.mime, id)).catch(() => null);
+      const gb = got instanceof Blob ? got : got && got.blob;
+      if (gb) { const sb = await solid(gb, f.mime); if ((sb.size === f.size || (got && got.trusted)) && await looksRight(sb, f.mime)) { b = sb; how = got instanceof Blob ? 'size' : 'link'; } }
+    }
+    if (!b) {
+      const rec = await idbGet('blobs', id).catch(() => null);
+      if (rec && rec.blob) { const sb = await solid(rec.blob, f.mime); if (sb.size === f.size && await looksRight(sb, f.mime)) { b = sb; how = 'local'; } }
+    }
+    if (!b) { miss++; if (misses.length < 5) misses.push({id, size: f.size, drive: DSIZE.get(id), mime: f.mime}); continue; }
     const r = await putContent(f.f, b, f.mime || b.type);
-    if (r && r.size != null && +r.size !== f.size) { miss++; continue; }
+    if (r && r.size != null && +r.size !== b.size) { miss++; if (misses.length < 5) misses.push({id, size: f.size, drive: +r.size, mime: f.mime, sent: b.size}); continue; }
     await storeBlob(id, b, f.mime, false).catch(() => {});
     const u = OBJ.get(id); if (u) { URL.revokeObjectURL(u); OBJ.delete(id); }
-    writeLocal('_files/' + id, Object.assign({}, f, {fx: Date.now()}), true);     /* ほかの端末に「取り直して」と知らせる */
+    writeLocal('_files/' + id, Object.assign({}, fileDoc(id), {size: b.size, fx: Date.now()}), true);     /* ほかの端末に「取り直して」と知らせる */
     BROKEN.delete(id); fixed++; setState();
   }
   scheduleSync(300);
   try { window.dispatchEvent(new CustomEvent('gdrive-assets')); } catch(e){}
-  return {fixed, miss, total: ids.length};
+  return {fixed, miss, total: ids.length, misses};
 }
 
 /* ---------- 仕分け：原本をフォルダへ。ほかの場所にはショートカット ---------- */

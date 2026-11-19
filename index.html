@@ -4286,28 +4286,63 @@ A.gdFix = () => {
       const fs = [...(inp.files || [])]; inp.remove(); if (!fs.length) return;
       let src = null;
       try { src = k === 'dir' ? folderEntries(fs) : await zipEntries(fs[0]); } catch(e){ toast('zipを読めなかった'); return; }
-      gdFixRun(src);
+      gdFixRun(src, k === 'dir' ? (fs[0].webkitRelativePath || '').split('/')[0] : fs[0].name);
     });
     inp.click();
   });
 };
-async function gdFixRun(src){
-  /* 大きさが同じものを候補にする。候補が複数あって中身が違うときは使わない */
+/* バックアップのデータと今のデータを見比べて「バックアップの画像 → 今の画像」の対応を作る（大きさで見つからないとき用） */
+function gdLinkMap(data, prefix){
+  const oldFile = new Map((data.images || []).map(im => [im.id, prefix + im.file]));
+  const out = new Map(); const has = id => !!(S.assets && S.assets.has && S.assets.has(id));
+  const walk = (a, b) => {
+    if (typeof a === 'string') { if (oldFile.has(a) && typeof b === 'string' && has(b) && !out.has(b)) out.set(b, oldFile.get(a)); return; }
+    if (Array.isArray(a)) { if (Array.isArray(b)) a.forEach((x, i) => walk(x, b[i])); return; }
+    if (a && typeof a === 'object' && b && typeof b === 'object') for (const k of Object.keys(a)) if (k in b) walk(a[k], b[k]);
+  };
+  for (const col of BK_COLS) for (const d of (data[col] || [])) { if (!d || !d.id || !S[col]) continue; const cur = S[col].get(d.id); if (cur) walk(d, cur); }
+  if (data.settings && S.settings) walk(data.settings, S.settings);
+  return out;
+}
+async function gdFixRun(src, fname){
+  let link = null, nImg = 0;
+  if (src) {
+    const dn = src.names.filter(n => /(^|\/)data\.json$/.test(n) && !/(^|\/)__MACOSX\//.test(n)).sort((x, y) => x.length - y.length)[0];
+    let data = null; try { if (dn) data = JSON.parse(await (await src.get(dn)).text()); } catch(e){}
+    if (!data || data.app !== 'settei-okiba') { toast('これはバックアップzipじゃないみたい。「創作箱庭バックアップ_日付.zip」を選んでね', 8000); return; }
+    const prefix = dn.slice(0, dn.length - 'data.json'.length);
+    nImg = (data.images || []).length;
+    link = gdLinkMap(data, prefix);
+  }
+  /* 大きさが同じものを候補にする。候補が複数あって中身が違うときは使わない。見つからなければデータの対応から探す */
   const bySize = new Map();
   if (src) for (const nm of src.names) { if (/(^|\/)data\.json$|(^|\/)__MACOSX\/|\/$/.test(nm)) continue; const z = src.sizeOf(nm); if (z > 0) { if (!bySize.has(z)) bySize.set(z, []); bySize.get(z).push(nm); } }
-  const source = src ? async size => {
-    const c = bySize.get(size); if (!c || !c.length) return null;
-    const first = await src.get(c[0]); if (!first) return null;
-    if (c.length > 1) { const a = new Uint8Array(await first.arrayBuffer()); for (const nm of c.slice(1)) { const o = await src.get(nm); const b = o ? new Uint8Array(await o.arrayBuffer()) : null; if (!b || b.length !== a.length || b.some((v, i) => v !== a[i])) return null; } }
-    return first;
+  const source = src ? async (size, mime, id) => {
+    const c = bySize.get(size);
+    if (c && c.length) {
+      const first = await src.get(c[0]);
+      if (first) {
+        let same = true;
+        if (c.length > 1) { const a = new Uint8Array(await first.arrayBuffer()); for (const nm of c.slice(1)) { const o = await src.get(nm); const b = o ? new Uint8Array(await o.arrayBuffer()) : null; if (!b || b.length !== a.length || b.some((v, i) => v !== a[i])) { same = false; break; } } }
+        if (same) return first;
+      }
+    }
+    if (link && link.has(id)) { const b = await src.get(link.get(id)); if (b) return {blob: b, trusted: true}; }
+    return null;
   } : null;
   const pg = progressSheet('画像を直してる'); pg.lock();
   try {
     const r = await window.__gdrive.repairOriginals(source, (k, n) => pg.set(`${k}/${n}`, k / Math.max(1, n)));
     pg.close();
-    if (!r.total) toast('壊れた画像はなかった');
-    else if (!r.miss) toast(`${r.fixed}枚直した`, 4000);
-    else toast(`${r.fixed}枚直した。${r.miss}枚は${src ? 'このバックアップに入ってなかった' : 'この端末に写しがなかった。バックアップzipを選んでね'}`, 7000);
+    if (!r.total) { toast('壊れた画像はなかった'); return; }
+    if (!r.miss) { toast(`${r.fixed}枚直した`, 4000); return; }
+    const kb = n => n == null ? '?' : n >= 1048576 ? (n / 1048576).toFixed(1) + 'MB' : Math.round(n / 1024) + 'KB';
+    const rs = openSheet(`<div class="sh-t">${r.fixed ? r.fixed + '枚直した。' : ''}${r.miss}枚は直せなかった</div>
+      <div class="sh-note">${src ? `選んだzip：${esc(fname || '')}（画像${nImg}枚）。この中に同じ画像が見つからなかった。` : 'この端末に正しい写しがなかった。バックアップzipを選んでね。'}<br>この画面のスクショを送ってくれたら原因を調べる。</div>
+      ${(r.misses || []).map(m => `<div class="bk-row">記録 ${kb(m.size)} / Drive ${kb(m.drive)}${m.sent != null ? ` / 送った ${kb(m.sent)}` : ''} ・${esc(m.mime || '?')}</div>`).join('')}
+      <div class="bk-row">壊れてた ${r.total}件・直した ${r.fixed}件・対応表 ${link ? link.size : 0}件</div>
+      <div class="row-btns"><button class="btn primary" data-x="no">閉じる</button></div>`);
+    rs.addEventListener('click', ev => { if (ev.target.closest('[data-x="no"]')) closeSheet(rs, true); });
   } catch(e){ pg.close(); toast('直せなかった：' + String((e && e.message) || e).slice(0, 80), 7000); }
 }
 async function gdRestoreSheet(){
