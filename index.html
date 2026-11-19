@@ -5629,18 +5629,22 @@ function ftDraw(d){
         m = {x: (A_.x + B_.x) / 2, y: (A_.y + B_.y) / 2 + mid};
       }
       if (u.label) svg += `<text class="ft-ulb" data-u="${u.id}" x="${m.x}" y="${m.y - 9}" text-anchor="middle">${esc(u.label)}</text>`;
-    } else if (A_ || B_) { const o = A_ || B_; m = {x: o.x, y: o.y + 78, single: true}; }
+    } else if (A_ || B_) { const o = A_ || B_; m = {x: o.x, y: o.y + 98, single: true}; }
     else { const v = L.V.get(u.id); if (v) { m = {x: v.x, y: v.y + mid, dot: true}; svg += `<circle class="ft-dot" data-u="${u.id}" cx="${m.x}" cy="${m.y}" r="7"/>`; } }
     if (m) unionPt.set(u.id, m);
   }
-  /* 子供への線（養子は点線） */
+  /* 子供への線（養子は点線）。同じ段に何本もあるときは、横線の高さを少しずつずらす */
+  const busN = new Map();
   for (const u of ix.U) {
     const m = unionPt.get(u.id); if (!m || !(u.kids || []).length) continue;
     const ks = (u.kids || []).map(k => ({k, p: L.P.get(k.p)})).filter(x => x.p);
     if (!ks.length) continue;
     const below = ks.filter(x => x.p.y > m.y);
-    const busY = below.length ? Math.min(...below.map(x => x.p.y)) - 40 : m.y + 40;
-    const y0 = m.single ? m.y - 44 + 30 : m.y;
+    const top = below.length ? Math.min(...below.map(x => x.p.y)) : m.y + 80;
+    const bn = busN.get(top) || 0; busN.set(top, bn + 1);
+    const busY = top - 30 - (bn % 4) * 12;
+    const y0 = m.y;
+    if (m.single) svg += `<line class="ft-hit" data-u="${u.id}" x1="${m.x}" y1="${y0}" x2="${m.x}" y2="${busY}"/><text class="ft-ulb" data-u="${u.id}" x="${m.x + 7}" y="${y0 + 16}">相手？</text>`;
     const allAd = ks.every(x => x.k.t === 'adopt') ? 'ad' : '';
     svg += `<line class="ft-kid ${allAd}" x1="${m.x}" y1="${y0}" x2="${m.x}" y2="${busY}"/>`;
     const xs = ks.map(x => x.p.x).concat(m.x);
@@ -5752,10 +5756,16 @@ function ftPick(d, title, opt = {}){
     let done = false;
     const sh = openSheet(`<div class="sh-t">${esc(title)}</div>
       ${opt.note ? `<div class="sh-note" style="margin-top:-4px">${esc(opt.note)}</div>` : ''}
-      ${inTree.length ? `<div class="sh-sub">この家系図にいる人</div>${inTree.map(p => `<button class="pick-row" data-x="p" data-id="${p.id}">${ftIcon(p, 30)}<span class="grow1">${esc(ftName(p))}</span><span class="r">${ftYear(p) ?? ''}</span></button>`).join('')}` : ''}
-      ${cs.length ? `<div class="sh-sub">キャラ</div>${cs.map(c => `<button class="pick-row" data-x="c" data-id="${c.id}">${charIcon(c, 30)}<span class="grow1">${esc(c.name || '名前なし')}</span><span class="r">${by(c)}</span></button>`).join('')}` : ''}
       <div class="sh-sub">キャラ登録してない人</div>
-      <div class="addrow" style="margin-top:0"><input class="inp" id="ftName" placeholder="名前" autocomplete="off"><input class="inp" id="ftY" inputmode="numeric" placeholder="生まれ年" style="width:6.2em;flex:none" autocomplete="off"><button class="btn" data-x="n">追加</button></div>`, {onClose: () => { if (!done) res(null); }});
+      <div class="addrow" style="margin-top:0"><input class="inp" id="ftName" placeholder="名前" autocomplete="off"><input class="inp" id="ftY" inputmode="numeric" placeholder="生まれ年" style="width:6.2em;flex:none" autocomplete="off"><button class="btn" data-x="n">追加</button></div>
+      ${cs.length ? `<div class="sh-sub">キャラ</div>${cs.map(c => `<button class="pick-row" data-x="c" data-id="${c.id}">${charIcon(c, 30)}<span class="grow1">${esc(c.name || '名前なし')}</span><span class="r">${by(c)}</span></button>`).join('')}` : ''}
+      ${inTree.length ? `<div class="sh-sub">この家系図にいる人</div>${inTree.map(p => `<button class="pick-row" data-x="p" data-id="${p.id}">${ftIcon(p, 30)}<span class="grow1">${esc(ftName(p))}</span><span class="r">${ftYear(p) ?? ''}</span></button>`).join('')}` : ''}`, {onClose: () => { if (!done) res(null); }});
+    /* 名前を打っている間（キーボードが出ている間）は、下の一覧を押せないようにする */
+    const nm = $('#ftName', sh), yy = $('#ftY', sh);
+    const lock = on => $$('.pick-row', sh).forEach(b => { b.style.pointerEvents = on ? 'none' : ''; b.style.opacity = on ? '.45' : ''; });
+    const upd = () => lock(!!(nm.value.trim() || yy.value.trim()));
+    nm.addEventListener('input', upd); yy.addEventListener('input', upd);
+    nm.addEventListener('keydown', ev => { if (ev.key === 'Enter' && !ev.isComposing) { ev.preventDefault(); $('[data-x="n"]', sh).click(); } });
     sh.addEventListener('click', ev => {
       const x = ev.target.closest('[data-x]'); if (!x) return;
       let id = null;
@@ -5772,6 +5782,19 @@ function ftKidInsert(d, u, pid, t){
   let i = u.kids.length;
   if (y != null) { const j = u.kids.findIndex(x => { const yy = ftYear(ftP(d, x.p)); return yy != null && yy > y; }); if (j >= 0) i = j; }
   u.kids.splice(i, 0, k);
+}
+function ftSwap(d, from, to){
+  for (const u of d.unions || []) {
+    if (u.a === from) u.a = to; if (u.b === from) u.b = to;
+    for (const k of u.kids || []) if (k.p === from) k.p = to;
+    if (u.a && u.a === u.b) u.b = null;
+    const seen = new Set(); u.kids = (u.kids || []).filter(k => !seen.has(k.p) && seen.add(k.p));
+  }
+  /* 同じ夫婦が2本になったら1本にまとめる */
+  const key = u => [u.a, u.b].sort().join('|');
+  const by = new Map();
+  for (const u of d.unions || []) { if (!(u.a && u.b)) continue; const k = key(u); const o = by.get(k); if (!o) { by.set(k, u); continue; } for (const kk of u.kids || []) if (!o.kids.some(x => x.p === kk.p)) o.kids.push(kk); if (!o.label && u.label) o.label = u.label; u.kids = []; u.b = null; }
+  d.people = (d.people || []).filter(x => x.id !== from);
 }
 function ftClean(d){
   const ids = new Set((d.people || []).map(p => p.id));
@@ -5790,6 +5813,7 @@ async function ftPersonMenu(d, pid){
     bu && sib > 1 ? [{k: 'left', label: '兄妹の中で左へ'}, {k: 'right', label: '兄妹の中で右へ'}] : [],
     bu ? [{k: 'adt', label: myK && myK.t === 'adopt' ? '親との関係：養子 → 実子にする' : '親との関係：実子 → 養子にする'}] : [],
     p.char ? [] : [{k: 'edit', label: '名前・生まれ年・性別', desc: [p.name, ys, p.g].filter(x => x != null && x !== '').join('・')}],
+    [{k: 'swap', label: '別の人に入れ替える', desc: 'まちがえたとき。線はそのまま'}],
     [{k: 'rm', label: '家系図から外す', danger: true}]
   );
   const k = await choose(ftName(p), opts);
@@ -5803,15 +5827,32 @@ async function ftPersonMenu(d, pid){
     const q = await ftPick(d, `${ftName(p)}の親`, {ok: x => x !== pid && !cur.includes(x) && !ftIsDesc(d, pid, x)}); if (!q) return; added = q;
     if (bu && cur.length === 1) {
       const ex = d.unions.find(u => u !== bu && ((u.a === cur[0] && u.b === q) || (u.a === q && u.b === cur[0])));
-      if (ex) { bu.kids = bu.kids.filter(x => x.p !== pid); ftKidInsert(d, ex, pid, myK && myK.t); }
+      if (ex) {
+        const all = bu.kids.length > 1 ? await choose(`ほかの兄妹も「${ftName(ftP(d, ex.a))} ＝ ${ftName(ftP(d, ex.b))}」の子供？`, [{k: 'all', label: `兄妹みんな（${bu.kids.length}人）`}, {k: 'one', label: `${ftName(p)}だけ`}]) : 'one';
+        if (!all) return;
+        for (const k2 of (all === 'all' ? bu.kids.slice() : [myK])) { bu.kids = bu.kids.filter(x => x.p !== k2.p); ftKidInsert(d, ex, k2.p, k2.t); }
+      }
       else if (bu.kids.length > 1) {
         const all = await choose(`ほかの子供も、${ftName(ftP(d, q))}の子供？`, [{k: 'all', label: `兄妹みんなの親にする（${bu.kids.length}人）`}, {k: 'one', label: `${ftName(p)}だけ`}]);
         if (!all) return;
         if (all === 'all') { if (bu.a) bu.b = q; else bu.a = q; }
         else { bu.kids = bu.kids.filter(x => x.p !== pid); const nu = {id: uid(), a: cur[0], b: q, kids: []}; d.unions.push(nu); ftKidInsert(d, nu, pid, myK && myK.t); }
       } else { if (bu.a) bu.b = q; else bu.a = q; }
-    } else if (bu && !cur.length) { bu.a = q; }
-    else { const nu = {id: uid(), a: q, b: null, kids: []}; d.unions.push(nu); ftKidInsert(d, nu, pid); }
+    } else if (bu && !cur.length) {
+      /* 親がわからない兄妹に親を足す：その親がもう夫婦なら、どれかに入れる */
+      const qs = d.unions.filter(u => u !== bu && (u.a === q || u.b === q));
+      let into = null;
+      if (qs.length) { const pick = await choose(`兄妹（${bu.kids.length}人）はどの子供？`, qs.map(u => ({k: u.id, label: u.a && u.b ? `${ftName(ftP(d, u.a))} ＝ ${ftName(ftP(d, u.b))}の子供` : `${ftName(ftP(d, q))}（相手わからない）の子供`})).concat(qs.some(u => !(u.a && u.b)) ? [] : [{k: '__new', label: `${ftName(ftP(d, q))}と、わからない相手の子供`}])); if (!pick) return; into = qs.find(u => u.id === pick) || null; }
+      if (into) { for (const k2 of bu.kids.slice()) ftKidInsert(d, into, k2.p, k2.t); bu.kids = []; } else bu.a = q;
+    }
+    else {
+      /* 親がもう夫婦になっていたら、どの夫婦の子供か聞く（同じ親の子供がばらばらにならないように） */
+      const qs = d.unions.filter(u => u.a === q || u.b === q);
+      let into = null;
+      if (qs.length) { const pick = await choose(`${ftName(p)}はどの子供？`, qs.map(u => ({k: u.id, label: u.a && u.b ? `${ftName(ftP(d, u.a))} ＝ ${ftName(ftP(d, u.b))}の子供` : `${ftName(ftP(d, q))}（相手わからない）の子供`})).concat(qs.some(u => !(u.a && u.b)) ? [] : [{k: '__new', label: `${ftName(ftP(d, q))}と、わからない相手の子供`}])); if (!pick) return; into = qs.find(u => u.id === pick) || null; }
+      if (!into) { into = {id: uid(), a: q, b: null, kids: []}; d.unions.push(into); }
+      ftKidInsert(d, into, pid);
+    }
   }
   else if (k === 'sp') {
     const q = await ftPick(d, `${ftName(p)}の配偶者`, {ok: x => x !== pid && !d.unions.some(u => (u.a === pid && u.b === x) || (u.a === x && u.b === pid))}); if (!q) return; added = q;
@@ -5854,11 +5895,17 @@ async function ftPersonMenu(d, pid){
     const y = await ask('生まれ年', p.y != null ? String(p.y) : '', {placeholder: '例：1850'}); if (y !== null) { const v = toInt(y); if (v == null) delete p.y; else p.y = v; }
     const g = await ask('性別', p.g || '', {placeholder: '例：男'}); if (g !== null) p.g = g.trim();
   }
+  else if (k === 'swap') {
+    const q = await ftPick(d, `「${ftName(p)}」のかわりに入れる人`, {ok: x => x !== pid, note: '親子・夫婦の線はそのままで、人だけ入れかわる'}); if (!q) return;
+    ftSwap(d, pid, q); added = q;
+    toast(`「${ftName(p)}」を「${ftName(ftP(d, q))}」に入れ替えた`, 3000);
+  }
   else if (k === 'rm') {
     if (!await confirmBox(`「${ftName(p)}」を家系図から外す？\nつながってる線も消える。`, '外す', true)) return;
     d.people = d.people.filter(x => x.id !== pid);
   }
-  ftClean(d); S.ui.ftSel = null; ftSave(d); ftRedraw(d, k === 'rm' ? null : pid, added);
+  if (added && k !== 'swap') { const verb = {par: 'の親', sp: 'の配偶者', kid: 'の子供', sib: 'の兄妹', ad: 'の養親'}[k]; if (verb) toast(`「${ftName(ftP(d, added))}」を${ftName(p)}${verb}にした`, 2600); }
+  ftClean(d); S.ui.ftSel = null; ftSave(d); ftRedraw(d, k === 'rm' || k === 'swap' ? (k === 'swap' ? added : null) : pid, added);
 }
 async function ftUnionMenu(d, uid_){
   const u = (d.unions || []).find(x => x.id === uid_); if (!u) return;
@@ -5868,7 +5915,34 @@ async function ftUnionMenu(d, uid_){
     const q = await ftPick(d, '兄妹みんなの親', {ok: x => !(u.kids || []).some(k2 => k2.p === x || ftIsDesc(d, k2.p, x))}); if (!q) return;
     u.a = q; ftClean(d); ftSave(d); ftRedraw(d); return;
   }
-  const k = await choose(nm, [{k: 'lb', label: '夫婦の書き方', desc: u.label || 'なし（正室・側室・再婚など）'}].concat(u.a && u.b ? [{k: 'rm', label: '夫婦の線を外す', danger: true}] : []));
+  if (!(u.a && u.b)) {
+    const pp = u.a || u.b; const kidsN = (u.kids || []).map(k2 => ftName(ftP(d, k2.p))).join('、');
+    const others = (d.unions || []).filter(x => x !== u && (x.a === pp || x.b === pp) && x.a && x.b);
+    const k = await choose(`${ftName(ftP(d, pp))}の子供（相手わからない）`, [{k: 'add', label: 'もう一人の親を足す'}].concat(others.map(x => ({k: x.id, label: `「${ftName(ftP(d, x.a))} ＝ ${ftName(ftP(d, x.b))}」の子供にまとめる`}))), kidsN);
+    if (!k) return;
+    let into = others.find(x => x.id === k);
+    if (k === 'add') {
+      const q = await ftPick(d, 'もう一人の親', {ok: x => x !== pp && !(u.kids || []).some(k2 => k2.p === x || ftIsDesc(d, k2.p, x))}); if (!q) return;
+      into = (d.unions || []).find(x => x !== u && ((x.a === pp && x.b === q) || (x.a === q && x.b === pp)));
+      if (!into) { if (u.a) u.b = q; else u.a = q; }
+    }
+    if (into) { for (const k2 of (u.kids || []).slice()) ftKidInsert(d, into, k2.p, k2.t); u.kids = []; }
+    ftClean(d); ftSave(d); ftRedraw(d, pp); return;
+  }
+  const k = await choose(nm, [{k: 'lb', label: '夫婦の書き方', desc: u.label || 'なし（正室・側室・再婚など）'}, {k: 'sa', label: `「${ftName(ftP(d, u.a))}」を別の人に`, desc: '子供はそのまま'}, {k: 'sb', label: `「${ftName(ftP(d, u.b))}」を別の人に`, desc: '子供はそのまま'}, {k: 'rm', label: '夫婦の線を外す', danger: true}]);
+  if (k === 'sa' || k === 'sb') {
+    const side = k === 'sa' ? 'a' : 'b', other = k === 'sa' ? u.b : u.a;
+    const q = await ftPick(d, `${ftName(ftP(d, other))}の相手`, {ok: x => x !== other && x !== u[side] && !(u.kids || []).some(k2 => k2.p === x || ftIsDesc(d, k2.p, x))}); if (!q) return;
+    const old = u[side];
+    const dup = (d.unions || []).find(x => x !== u && ((x.a === other && x.b === q) || (x.a === q && x.b === other)));
+    if (dup) { for (const k2 of (u.kids || []).slice()) ftKidInsert(d, dup, k2.p, k2.t); u.kids = []; u.b = null; }
+    else u[side] = q;
+    ftClean(d);
+    /* まちがえて入れていた人が、もうどこともつながってなければ外す */
+    if (old && !(d.unions || []).some(x => x.a === old || x.b === old || (x.kids || []).some(k2 => k2.p === old))) d.people = d.people.filter(x => x.id !== old);
+    toast(`${ftName(ftP(d, other))}の相手を「${ftName(ftP(d, q))}」にした`, 3000);
+    ftClean(d); ftSave(d); ftRedraw(d, other, q); return;
+  }
   if (k === 'lb') {
     const v = await choose('夫婦の書き方', [{k: '__none', label: 'なし', on: !u.label}].concat(FT_LABELS.map(l => ({k: l, label: l, on: u.label === l}))).concat([{k: '__own', label: '自分で書く'}]));
     if (!v) return;
