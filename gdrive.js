@@ -868,7 +868,11 @@ const READY = (async () => {
   try { await loadLocal(); } catch(e){ console.warn('[gdrive] local', e); }
   loadToken(); loadGis().catch(() => {});
   if (!KV.pulledOnce) await gate();
-  else setTimeout(() => { if (REDIRECT_ERR) toastErr(REDIRECT_ERR); if (tokenValid()) { sync(); pumpUploads(); scheduleReconcile(8000); } else setState('auth'); }, 200);
+  else {
+    /* 開いたとき、つながるなら先にDriveの最新を取ってくる（古いデータのまま、アプリの自動の書き換えが走らないように）。遅いときは6秒であきらめる */
+    if (tokenValid() && navigator.onLine) { try { await Promise.race([sync(), sleep(6000)]); } catch(e){} }
+    setTimeout(() => { if (REDIRECT_ERR) toastErr(REDIRECT_ERR); if (tokenValid()) { sync(); pumpUploads(); scheduleReconcile(8000); } else setState('auth'); }, 200);
+  }
 })();
 
 window.__gdrive = {

@@ -1189,7 +1189,7 @@ function checkReady(){
     clearTimeout(loadTimer); S.status = 'ok';
     if (!S.settings) S.settings = defaultSettings();
     migrateStats();
-    try { famMigrateAll(); } catch(e){}
+    famMigrateSoon();
     if (!S.settings.migLabels3) { const ls = (S.settings.labels || []).slice(); const a = ls.indexOf('設定メモ'), b = ls.indexOf('小説'); if (a >= 0 && b > a) { ls[a] = '小説'; ls[b] = '設定メモ'; S.settings.labels = ls; } S.settings.migLabels3 = true; saveSettings(); }
     if (!S.settings.migLabels2) { let ls = (S.settings.labels || []).slice(); ['史実', 'その他'].forEach(l => { if (!ls.includes(l)) ls = ls.concat(l); }); S.settings.labels = ls; S.settings.migLabels2 = true; saveSettings(); }
     curWork(); render(); updateSaveInd();
@@ -3709,6 +3709,15 @@ function famMigrate(c){
     v.hidden = hid.filter(h => FAMILY_RELS.includes(h));
   }
   return true;
+}
+/* Drive版：Driveの最新を取ってきてから書き換える（古いデータで上書きしないように） */
+function famMigrateSoon(){
+  const run = () => { try { famMigrateAll(); } catch(e){} };
+  if (!window.__gdrive) { run(); return; }
+  const t0 = Date.now(), st = window.__gdrive.state;
+  if (st.lastSync && t0 - st.lastSync < 30000) { run(); return; }
+  const h = ev => { const g = ev.detail || {}; if (g.mode === 'ok' && g.lastSync >= t0) { window.removeEventListener('gdrive-state', h); run(); } };
+  window.addEventListener('gdrive-state', h);
 }
 function famMigrateAll(){ for (const c of S.chars.values()) if (!c.deleted && !c.wtype && !c.famRel3 && Array.isArray(c.tabs)) { famMigrate(c); saveChar(c, 800); } }
 function ensureDname(c){
