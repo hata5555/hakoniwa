@@ -12,9 +12,10 @@ if (/(^|\.)(claude\.ai|claudeusercontent\.com|anthropic\.com)$/.test(location.ho
 
 const CFG = Object.assign({
   clientId: '',
-  rootName: '創作の設定置き場',
+  rootName: '創作箱庭',
   apiBase: 'https://www.googleapis.com',
   gisSrc: 'https://accounts.google.com/gsi/client',
+  authUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
   scope: 'https://www.googleapis.com/auth/drive.file'
 }, window.GDRIVE_CONFIG || {});
 
@@ -170,11 +171,35 @@ function loadGis(){
     document.head.appendChild(s);
   }));
 }
+/* ホーム画面・Dockのアプリとして開いているときは、ポップアップのログインが使えないことが多いので、
+   Googleのページへ移動してログイン → この住所に戻ってくる方式にする */
+const STANDALONE = (() => { try { return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; } catch(e){ return false; } })();
+const REDIRECT_URI = location.origin + location.pathname.replace(/index\.html$/, '');
+let REDIRECT_ERR = '';
+function takeRedirectToken(){
+  const h = location.hash; if (!h || h.length < 2) return;
+  const p = new URLSearchParams(h.slice(1));
+  if (!p.get('access_token') && !p.get('error')) return;
+  let want = null; try { want = localStorage.getItem('gd_state'); localStorage.removeItem('gd_state'); } catch(e){}
+  try { history.replaceState(null, '', location.pathname + location.search); } catch(e){}
+  if (p.get('error')) { REDIRECT_ERR = p.get('error') === 'access_denied' ? 'ログインがキャンセルされた' : 'ログインできなかった（' + p.get('error') + '）'; return; }
+  if (!want || p.get('state') !== want) { REDIRECT_ERR = 'ログインの確認がうまくいかなかった。もう一度押してね'; return; }
+  AUTH.token = p.get('access_token'); AUTH.exp = Date.now() + (Number(p.get('expires_in')) || 3600) * 1000; AUTH.acct = ''; AUTH.acctTok = ''; saveToken();
+}
+takeRedirectToken();
+function redirectLogin(){
+  const state = rid(24); try { localStorage.setItem('gd_state', state); } catch(e){}
+  try { if (typeof flushAll === 'function') flushAll(); } catch(e){}
+  const q = new URLSearchParams({client_id: CFG.clientId, redirect_uri: REDIRECT_URI, response_type: 'token', scope: CFG.scope, include_granted_scopes: 'true', state});
+  if (KV.account || KV.email) q.set('login_hint', KV.account || KV.email);
+  setTimeout(() => { flushPersist().finally(() => { location.assign(CFG.authUrl + '?' + q.toString()); }); }, 150);
+}
 let tokenClient = null;
 /* ボタンを押した流れの中で呼ぶ（ポップアップが止められないように） */
 function connect(){
   return new Promise((res, rej) => {
     if (!CFG.clientId) { rej(new Error('config.js にクライアントIDが入ってない')); return; }
+    if (STANDALONE || CFG.redirect) { redirectLogin(); return; }   /* このあとページごと移動する */
     const go = () => {
       try {
         tokenClient = google.accounts.oauth2.initTokenClient({
@@ -321,6 +346,7 @@ function ensureRoot(){
 async function ensureRootNow(){
   let root = await byProp('sk', 'root');
   if (!root) root = await createMeta({name: CFG.rootName, mimeType: FOLDER, appProperties: {sk: 'root'}});
+  else if (root.name !== CFG.rootName) { try { await patchMeta(root.id, {name: CFG.rootName}); } catch(e){} }
   KV.rootId = root.id;
   const sub = async (sk, name, parent) => (await byProp('sk', sk)) || createMeta({name, mimeType: FOLDER, parents: [parent], appProperties: {sk}});
   KV.dataDirId = (await sub('datadir', 'データ（さわらない）', KV.rootId)).id;
@@ -414,10 +440,50 @@ function buildRemote(){
 }
 async function dailyBackup(){
   const day = today(); if (KV.bkDay === day || !KV.dataId) return;
+  /* ほかの端末がもう今日の分を作っていたら作らない */
+  if ((await listFiles(`${qs(KV.bkDirId)} in parents and name=${qs('データ_' + day + '.json')} and trashed=false`)).length) { KV.bkDay = day; saveKV(); return; }
   await api('POST', `files/${KV.dataId}/copy`, {query: {fields: 'id'}, headers: J, body: JSON.stringify({name: `データ_${day}.json`, parents: [KV.bkDirId], appProperties: {sk: 'bk'}})});
   KV.bkDay = day; saveKV();
-  const bks = (await listFiles(`${qs(KV.bkDirId)} in parents and trashed=false`)).filter(f => /^データ_\d{4}-\d{2}-\d{2}\.json$/.test(f.name)).sort((a, b) => b.name.localeCompare(a.name));
+  const bks = (await listFiles(`${qs(KV.bkDirId)} in parents and trashed=false`)).filter(f => /^データ_\d{4}-\d{2}-\d{2}\.json$/.test(f.name)).sort((a, b) => (a.name < b.name ? 1 : a.name > b.name ? -1 : 0));
   for (const f of bks.slice(14)) await trash(f.id).catch(() => {});
+}
+
+/* ---------- Driveのバックアップから戻す ---------- */
+const BK_RE = /^データ_(\d{4})-(\d{2})-(\d{2})(?:_(\d{2})(\d{2})_戻す前)?\.json$/;
+async function listBackups(){
+  if (!tokenValid()) throw authErr();
+  await ensureAccount(); await ensureRoot();
+  const fs = (await listFiles(`${qs(KV.bkDirId)} in parents and trashed=false`)).filter(f => BK_RE.test(f.name)).sort((a, b) => (a.name < b.name ? 1 : a.name > b.name ? -1 : 0));
+  return fs.map(f => { const m = BK_RE.exec(f.name); return {id: f.id, name: f.name, day: `${+m[2]}月${+m[3]}日`, time: m[4] ? `${m[4]}:${m[5]}` : '', before: !!m[4]}; });
+}
+/* その日の状態に戻す。今の状態は「戻す前」として先にバックアップへ残す（あとで戻し直せる） */
+async function restoreBackup(fileId){
+  if (!tokenValid()) throw authErr();
+  try { if (typeof flushAll === 'function') flushAll(); } catch(e){}
+  await sleep(150); await flushPersist();
+  await sync();
+  await ensureAccount(); await ensureRoot();
+  const r = await api('GET', 'files/' + fileId, {query: {alt: 'media'}, raw: true});
+  const snap = JSON.parse(await r.text());
+  if (!snap || !snap.docs || snap.format > FILE_FORMAT) throw new Error('このバックアップは読めなかった');
+  /* 今の状態を残す */
+  const d = new Date(); const nm = `データ_${today()}_${pad(d.getHours())}${pad(d.getMinutes())}_戻す前.json`;
+  await uploadNew(new Blob([JSON.stringify(buildRemote())], {type: 'application/json'}), {name: nm, mimeType: 'application/json', parents: [KV.bkDirId], appProperties: {sk: 'bk'}});
+  const befores = (await listFiles(`${qs(KV.bkDirId)} in parents and trashed=false`)).filter(f => /_戻す前\.json$/.test(f.name)).sort((a, b) => (a.name < b.name ? 1 : a.name > b.name ? -1 : 0));
+  for (const f of befores.slice(5)) await trash(f.id).catch(() => {});
+  /* アプリのデータをその日の形にそろえる（原本の記録 _files は消さない。仕分けの記録 _drv/_dir/_txt は今のまま） */
+  const sd = snap.docs;
+  for (const p of Object.keys(sd)) {
+    const e = sd[p]; if (!e || typeof e.t !== 'number') continue;
+    if (p.startsWith('_files/')) { if (!e.d && !docOf(p)) writeLocal(p, e.v, true); continue; }
+    if (p.startsWith('_')) continue;
+    if (e.d) { if (docOf(p)) deleteLocal(p, true); }
+    else if (JSON.stringify(docOf(p)) !== JSON.stringify(e.v)) writeLocal(p, e.v, true);
+  }
+  for (const [p, e] of [...DOCS]) if (!p.startsWith('_') && !e.d && !(p in sd)) deleteLocal(p, true);
+  await flushPersist();
+  await sync();
+  return true;
 }
 
 /* ---------- 画像・PDF ---------- */
@@ -660,7 +726,7 @@ function gate(){
       #gdGate button{font:inherit;font-size:16px;font-weight:700;padding:13px 22px;border-radius:999px;border:0;background:#7a2e2e;color:#fff;width:100%}
       #gdGate button:disabled{opacity:.5}
       #gdGate .er{color:#b33;font-size:13px;margin-top:14px;min-height:1em;white-space:pre-wrap}
-    </style><div class="bx"><h1>創作の設定置き場</h1><p>データと画像は、自分のGoogle Driveに入るよ。<br>まずGoogleにログインしてね。</p><button id="gdGo">Googleでログイン</button><div class="er" id="gdEr"></div></div>`;
+    </style><div class="bx"><h1>創作箱庭</h1><p>データと画像は、自分のGoogle Driveに入るよ。<br>まずGoogleにログインしてね。</p><button id="gdGo">Googleでログイン</button><div class="er" id="gdEr"></div></div>`;
     const mount = () => document.body.appendChild(el);
     if (document.body) mount(); else document.addEventListener('DOMContentLoaded', mount);
     const er = m => { const x = el.querySelector('#gdEr'); if (x) x.textContent = m || ''; };
@@ -679,6 +745,7 @@ function gate(){
       connect().then(finish, e => er(String(e.message || e)));
     });
     if (!CFG.clientId) setTimeout(() => er('config.js にGoogleのクライアントIDが入ってない。手順書の「Google側の設定」を見てね'), 0);
+    else if (REDIRECT_ERR) setTimeout(() => er(REDIRECT_ERR), 0);
     else if (tokenValid()) setTimeout(finish, 0);
   });
 }
@@ -708,12 +775,12 @@ const READY = (async () => {
   try { await loadLocal(); } catch(e){ console.warn('[gdrive] local', e); }
   loadToken(); loadGis().catch(() => {});
   if (!KV.pulledOnce) await gate();
-  else setTimeout(() => { if (tokenValid()) { sync(); pumpUploads(); scheduleReconcile(8000); } else setState('auth'); }, 200);
+  else setTimeout(() => { if (REDIRECT_ERR) toastErr(REDIRECT_ERR); if (tokenValid()) { sync(); pumpUploads(); scheduleReconcile(8000); } else setState('auth'); }, 200);
 })();
 
 window.__gdrive = {
   get state(){ return {mode: ST.mode, err: ST.err, pending: PENDING.size, lastSync: KV.lastSync || 0, email: KV.account || KV.email || '', connected: tokenValid(), rootId: KV.rootId || '', quota: KV.quota || null}; },
-  connect, signOut,
+  connect, signOut, listBackups, restoreBackup,
   syncNow: () => { if (!tokenValid()) return Promise.resolve(); return sync().then(() => { pumpUploads(); scheduleReconcile(500); }); },
   folderUrl: () => KV.rootId ? 'https://drive.google.com/drive/folders/' + KV.rootId : 'https://drive.google.com/',
   ping: () => setState(),

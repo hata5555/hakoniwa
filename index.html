@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>創作の設定置き場</title>
+<title>創作箱庭</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@600;700&display=swap" rel="stylesheet">
 <script>try{var t=localStorage.getItem('theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
@@ -234,6 +234,7 @@ select.inp{padding-right:8px;background-image:none}
 .pl-tabs button.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 .pl-n{min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--accent);color:#fff;font-size:11px;display:inline-grid;place-items:center}
 .fs-list{display:flex;flex-direction:column;gap:10px}
+.ep-pdf-h{font-size:12px;color:var(--sub);margin:12px 0 4px}
 .fs-item{border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:12px 14px}
 .fs-item.done{opacity:.6}
 .fs-t{font-size:15px;line-height:1.6;white-space:pre-wrap;margin-bottom:8px}
@@ -931,7 +932,7 @@ details.more-d summary{font-size:14px;color:var(--accent);padding:6px 0;cursor:p
 .p-sum[class*="c-"]{font-weight:700}.p-sum.c-red{color:var(--tc-red)}.p-sum.c-blue{color:var(--tc-blue)}.p-sum.c-yellow{color:var(--tc-yellow)}.p-sum.c-green{color:var(--tc-green)}
 </style>
 <script>/* GitHub版だけ：Google Drive に保存する仕組みを読み込む（claude.aiの中では読み込まない） */
-if (/(^|\.)github\.io$|^localhost$|^127\.0\.0\.1$/.test(location.hostname)) document.write('<script src="config.js"><\/script><script src="gdrive.js"><\/script>');</script>
+if (/(^|\.)github\.io$|^localhost$|^127\.0\.0\.1$/.test(location.hostname)) document.write('<link rel="manifest" href="manifest.json"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="創作箱庭"><script src="config.js"><\/script><script src="gdrive.js"><\/script>');</script>
 </head>
 <body>
 <div id="app"></div>
@@ -1285,12 +1286,12 @@ function statusScreen(){
   return `<div class="center-msg"><h1>データベースにつながらない</h1><p>このアプリは、claude.aiにログインしたブラウザか、Claudeアプリで開いたときだけデータを保存できる。<br>ログイン状態を確認して開き直してね。</p></div>`;
 }
 function onboarding(){
-  return `<div class="center-msg"><h1>創作の設定置き場</h1><p>まずは最初の創作を作ろう。<br>創作ごとにキャラ・年表・メモを分けて置ける。</p>
+  return `<div class="center-msg"><h1>創作箱庭</h1><p>まずは最初の創作を作ろう。<br>創作ごとにキャラ・年表・メモを分けて置ける。</p>
   <div class="addrow" style="margin-top:18px"><input class="inp" id="firstWork" placeholder="創作の名前"><button class="btn primary" data-a="createFirstWork">作る</button></div>
   <button class="mini" style="margin-top:22px" data-a="restoreStart">バックアップから復元</button></div>`;
 }
 function sideHtml(w){
-  return `<div class="side-app">創作の設定置き場</div>
+  return `<div class="side-app">創作箱庭</div>
   <button class="side-work" data-a="workSheet">${esc(w.name)} <span style="font-size:12px;color:var(--sub)">▼</span></button>
   <div style="height:8px"></div>
   ${SECTIONS.map(s => `<button class="side-sec ${S.ui.section === s.k && S.ui.screen === 'home' ? 'on' : ''}" data-a="section" data-k="${s.k}">${s.t}${s.soon ? '<span class="soon">準備中</span>' : ''}</button>`).join('')}
@@ -3204,9 +3205,10 @@ A.pdfAdd = async () => {
   if (!S.assets) { toast('ここではファイルのアップロードが使えない'); return; }
   const files = (await pickFiles(true, 'application/pdf,.pdf')).filter(f => /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name));
   if (!files.length) return;
-  const big = files.filter(f => f.size > 20 * 1048576);
-  if (big.length) toast(`20MBより大きいPDFは入れられない（${big.length}件）。URL欄にリンクを貼ってね`, 6000);
-  const ok = files.filter(f => f.size <= 20 * 1048576); if (!ok.length) return;
+  const LIM = window.__gdrive ? 500 * 1048576 : 20 * 1048576;
+  const big = files.filter(f => f.size > LIM);
+  if (big.length) toast(`${window.__gdrive ? 500 : 20}MBより大きいPDFは入れられない（${big.length}件）。URL欄にリンクを貼ってね`, 6000);
+  const ok = files.filter(f => f.size <= LIM); if (!ok.length) return;
   let n = 0, fail = 0; const pt = toast('PDFをアップロード中…', 600000);
   for (const f of ok) {
     pt.textContent = `PDFをアップロード中… ${n + fail + 1}/${ok.length}`;
@@ -4241,16 +4243,35 @@ function gdSheetBody(){
 }
 function gdSheet(){
   const sh = openSheet(`<div class="sh-t">Google Drive</div><div id="gdSheetBody">${gdSheetBody()}</div>
-    <div class="sh-note" style="margin:10px 0 4px">データと画像はDriveの「創作の設定置き場」フォルダに入ってる。毎日1回、データの写しも「バックアップ」に残る。</div>
+    <div class="sh-note" style="margin:10px 0 4px">データと画像はDriveの「創作箱庭」フォルダに入ってる。毎日1回、データの写しも「バックアップ」に残る。</div>
     <button class="menu-item" data-x="sync">今すぐ同期</button>
     <button class="menu-item" data-x="open">Driveでフォルダを開く</button>
+    <button class="menu-item" data-x="restore">Driveのバックアップから戻す<span class="r">日付を選んで、その日の状態に</span></button>
     ${S.gd && S.gd.connected ? '<button class="menu-item" data-x="out">ログアウト<span class="r">データはこの端末とDriveに残る</span></button>' : '<button class="menu-item" data-x="in">Googleにつなぐ</button>'}`);
   sh.addEventListener('click', ev => {
     const x = ev.target.closest('button[data-x]'); if (!x) return; const k = x.dataset.x;
     if (k === 'sync') { if (!(S.gd && S.gd.connected)) { A.gdConnect(); return; } toast('同期してる…'); window.__gdrive.syncNow().then(() => toast('同期した')); }
     else if (k === 'open') window.open(window.__gdrive.folderUrl(), '_blank');
+    else if (k === 'restore') { if (!(S.gd && S.gd.connected)) { A.gdConnect(); return; } gdRestoreSheet(); }
     else if (k === 'in') { closeSheet(sh, true); A.gdConnect(); }
     else if (k === 'out') { confirmBox('Googleからログアウトする？\nこの端末で書いたものは残ってて、次につないだときにDriveへ送られる。', 'ログアウト').then(ok => { if (ok) { window.__gdrive.signOut(); closeSheet(sh, true); } }); }
+  });
+}
+async function gdRestoreSheet(){
+  const sh = openSheet(`<div class="sh-t">Driveのバックアップから戻す</div><div class="sh-note">毎日1つ、14日分残ってる。戻すと、その日より後に書いたものは消える。戻す前の状態も「戻す前」として残るから、まちがえても戻し直せる。<br>画像やPDFの原本は消えない。</div><div id="gdBkList" class="bk-row">読み込んでる…</div>`);
+  let list = [];
+  try { list = await window.__gdrive.listBackups(); }
+  catch(e){ const el = $('#gdBkList', sh); if (el) el.textContent = '読み込めなかった：' + String((e && e.message) || e).slice(0, 80); return; }
+  const el = $('#gdBkList', sh); if (!el) return;
+  el.classList.remove('bk-row');
+  el.innerHTML = list.length ? list.map((b, i) => `<button class="menu-item" data-i="${i}">${esc(b.day)}${b.time ? ' ' + esc(b.time) : ''}<span class="r">${b.before ? '戻す前の状態' : i === list.findIndex(x => !x.before) ? 'いちばん新しい' : ''}</span></button>`).join('') : '<div class="bk-row">まだバックアップがない（1日1回、自動でできる）</div>';
+  el.addEventListener('click', async ev => {
+    const x = ev.target.closest('button[data-i]'); if (!x) return; const b = list[+x.dataset.i]; if (!b) return;
+    const label = b.day + (b.time ? ' ' + b.time : '') + (b.before ? '（戻す前）' : '');
+    if (!await confirmBox(`${label}の状態に戻す？\nそれより後に書いたものは消える（今の状態は「戻す前」として残る）。`, '戻す', true)) return;
+    closeSheet(sh, true); toast('戻してる…', 20000);
+    try { await window.__gdrive.restoreBackup(b.id); toast('戻した。読み込み直すね'); setTimeout(() => location.reload(), 600); }
+    catch(e){ toast('戻せなかった：' + String((e && e.message) || e).slice(0, 80), 7000); }
   });
 }
 /* どの原本をDriveのどのフォルダに置くか（最初の1つが置き場所、残りはショートカット。weak＝ほかに置き場所がないときだけ使う） */
@@ -4299,6 +4320,7 @@ function driveLayout(isAsset){
       const nm = k === 'eps' ? `第${it.no}話${it.title ? ' ' + it.title : ''}` : `同人誌 ${it.title || '無題'}`;
       const dir = base.concat({key: (k === 'eps' ? 'e:' : 'b:') + it.id, name: nm});
       (it.pages || []).forEach((pg, i) => push(dir, String(i + 1).padStart(3, '0'), pg.id));
+      (it.pdfs || []).forEach(f => push(dir, String(f.name || 'PDF').replace(/\.pdf$/i, ''), f.a, {ext: '.pdf'}));
     }
   }
   /* メモ・チャット・相関図などに入っている画像 */
@@ -4418,7 +4440,7 @@ async function offerFile(filename, text){
   });
   return false;
 }
-async function exportMd(){ const ok = await offerFile(`設定置き場_読める版_${today()}.md`, toMarkdown()); if (ok) toast('書き出した'); }
+async function exportMd(){ const ok = await offerFile(`創作箱庭_読める版_${today()}.md`, toMarkdown()); if (ok) toast('書き出した'); }
 function fieldMd(c, f){
   const v = c.values[f.id];
   switch (f.type) {
@@ -4451,7 +4473,7 @@ function fieldMd(c, f){
   }
 }
 function toMarkdown(){
-  let out = `# 創作の設定置き場（${new Date().toLocaleString('ja-JP')} 書き出し）\n\n`;
+  let out = `# 創作箱庭（${new Date().toLocaleString('ja-JP')} 書き出し）\n\n`;
   for (const w of liveWorks()) {
     out += `# ${w.name}\n\n## キャラ\n\n`;
     for (const c of charsOf(w)) {
@@ -4802,7 +4824,7 @@ A.backupZip = async () => {
     data.images = images; data.missing = missing; data.files = files; data.filesOut = filesOut;
     zw.add('data.json', new TextEncoder().encode(JSON.stringify(data)));
     const blob = zw.finish(); pg.lock(); pg.close();
-    const ok = await saveBlob(`設定置き場バックアップ_${today()}.zip`, blob);
+    const ok = await saveBlob(`創作箱庭バックアップ_${today()}.zip`, blob);
     if (ok) { const cp = images.filter(x => x.q !== 'orig').length; S.settings.lastBackupAt = Date.now(); saveSettings(); toast(`バックアップを保存した（画像${images.length}枚${cp ? `。うち${cp}枚は元の画像が読めず、アプリ内の表示用で保存` : ''}${missing.length ? `。${missing.length}枚は見つからなかった` : ''}${files.length ? `。PDF${files.length}件` : ''}${filesOut.length ? `。PDF${filesOut.length}件は読めなかったので入ってない（アプリの中には残ってる）` : ''}）`, 7000); render(); }
   } catch(e){ pg.lock(); pg.close(); toast('バックアップを作れなかった：' + ((e && (e.code || e.message)) || 'error'), 6000); }
 };
@@ -6725,9 +6747,10 @@ function openEpSheet(c, k, it0){
     <div class="form-row"><label class="fl">タイトル</label><input class="inp" id="epTitle" value="${esc(it.title || '')}" autocomplete="off"></div>
     <div class="form-row"><div class="ent-top"><label class="fl">ページ</label><span class="grow1"></span><span class="ep-cap" id="epCap"></span></div>
       <div class="pg-list sortlist" data-sort="pages" id="pgList"></div>
-      <button class="mini" data-x="add" id="pgAdd">＋ PDF・PNGを追加</button><div class="ep-prog" id="epProg"></div></div>
+      <button class="mini" data-x="add" id="pgAdd">＋ PDF・PNGを追加</button><div class="ep-prog" id="epProg"></div><div id="epPdfs"></div></div>
     ${isNew ? '' : '<div class="row-btns"><button class="btn danger" data-x="del">削除</button></div>'}`, {onClose: () => { if (gone) return; commitNo(); if (added) { saveComic(c, 0); if (S.ui.screen === 'comic') S.ui.cmTab = k; } render(); }});
-  const paint = () => { const l = $('#pgList', sh); l.innerHTML = it.pages.map(rowHtml).join(''); $('#epCap', sh).textContent = `残り約${pagesLeft()}枚`; };
+  const paintPdfs = () => { const el = $('#epPdfs', sh); if (!el) return; const ps = it.pdfs || []; el.innerHTML = ps.length ? `<div class="ep-pdf-h">元のPDF（Driveに圧縮せずそのまま入ってる）</div>${ps.map((f, i) => `<div class="pdf-row"><span class="pdf-ic">PDF</span><span class="pdf-nm">${esc(f.name || 'PDF')}<span class="pdf-sz">${f.size ? fmtSize(f.size) : ''}</span></span><button class="btn sm" data-x="pdfOpen" data-i="${i}">開く</button><button class="x" data-x="pdfRm" data-i="${i}" aria-label="外す">×</button></div>`).join('')}` : ''; };
+  const paint = () => { const l = $('#pgList', sh); l.innerHTML = it.pages.map(rowHtml).join(''); $('#epCap', sh).textContent = window.__gdrive ? '' : `残り約${pagesLeft()}枚`; paintPdfs(); };
   paint();
   $('#pgList', sh)._onSort = (a, b) => { const [m] = it.pages.splice(a, 1); it.pages.splice(b, 0, m); save(200); paint(); };
   const commitNo = () => {
@@ -6759,6 +6782,10 @@ function openEpSheet(c, k, it0){
       for (const f of files) {
         if (stopped) break;
         if (f.type === 'application/pdf' || /\.pdf$/i.test(f.name || '')) {
+          if (window.__gdrive && S.assets && S.assets.upload) {   /* 元のPDFはそのままDriveへ（ページの絵は表示用） */
+            try { const up = await S.assets.upload(f, {type: 'application/pdf'}); it.pdfs = (it.pdfs || []).concat({a: up.id, name: f.name || 'PDF', size: f.size, at: Date.now()}); save(200); paintPdfs(); }
+            catch(e){ toast('元のPDFを保存できなかった（' + String((e && (e.code || e.message)) || e).slice(0, 60) + '）', 6000); }
+          }
           prog('PDFを開いてる…');
           let doc = null;
           try { const lib = await loadPdfjs(); doc = await lib.getDocument({data: new Uint8Array(await f.arrayBuffer()), isEvalSupported: false}).promise; }
@@ -6788,6 +6815,15 @@ function openEpSheet(c, k, it0){
     else if (bad) toast(`${bad}ページ読めなかった`);
   };
   sh.addEventListener('click', async ev => {
+    const xo = ev.target.closest('[data-x="pdfOpen"], [data-x="pdfRm"]');
+    if (xo) {
+      const f = (it.pdfs || [])[+xo.dataset.i]; if (!f) return;
+      if (xo.dataset.x === 'pdfRm') { if (!await confirmBox('この元のPDFを外す？\nページの絵はそのまま残る。', '外す', true)) return; it.pdfs.splice(+xo.dataset.i, 1); save(200); paintPdfs(); return; }
+      const link = S.assets && S.assets.link && S.assets.link(f.a); if (link) { window.open(link, '_blank'); return; }
+      const win = window.open('', '_blank'); const u = S.assets && S.assets.resolve ? await S.assets.resolve(f.a) : null;
+      if (u && win) win.location.href = u; else { if (win) win.close(); toast('まだDriveに送れてない。少し待ってからもう一度開いてね'); }
+      return;
+    }
     const x = ev.target.closest('[data-x]'); if (!x) return; const kx = x.dataset.x;
     if (kx === 'add') { if (busy) return; if (full()) { toast('漫画の容量がいっぱい。いらない話を消すと空く。', 6000); return; } const fs = await pickFiles(true, 'application/pdf,image/png,image/jpeg,.pdf,.png'); if (fs.length) addFiles(fs); }
     else if (kx === 'pgDel') {
