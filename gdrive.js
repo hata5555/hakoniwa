@@ -152,7 +152,7 @@ const ST = {mode: 'init', err: '', busy: false};
 function setState(mode, err){
   if (mode) ST.mode = mode;
   if (err !== undefined) ST.err = err;
-  const detail = {mode: ST.mode, err: ST.err, busy: !!(syncing || reconciling || pumping), pending: PENDING.size, lastSync: KV.lastSync || 0, email: KV.account || KV.email || '', connected: tokenValid(), rootId: KV.rootId || ''};
+  const detail = {mode: ST.mode, err: ST.err, busy: !!(syncing || reconciling || pumping), pending: PENDING.size, broken: BROKEN.size, lastSync: KV.lastSync || 0, email: KV.account || KV.email || '', connected: tokenValid(), rootId: KV.rootId || ''};
   try { window.dispatchEvent(new CustomEvent('gdrive-state', {detail})); } catch(e){}
 }
 function toastErr(msg){ try { window.dispatchEvent(new CustomEvent('gdrive-toast', {detail: msg})); } catch(e){} }
@@ -303,7 +303,7 @@ async function api(method, path, opt = {}){
   }
 }
 const J = {'Content-Type': 'application/json; charset=UTF-8'};
-const FIELDS = 'id,name,mimeType,parents,version,trashed,appProperties';
+const FIELDS = 'id,name,mimeType,parents,version,trashed,appProperties,size';
 async function listFiles(q){
   const out = []; let pt = null;
   do { const r = await api('GET', 'files', {query: {q, fields: 'nextPageToken,files(' + FIELDS + ')', pageSize: 1000, pageToken: pt, spaces: 'drive'}}); out.push(...(r.files || [])); pt = r.nextPageToken; } while (pt);
@@ -410,6 +410,7 @@ async function syncOnce(){
   }
   KV.lastSync = Date.now(); saveKV(); setState('ok', '');
   if (PENDING.size) pumpUploads();
+  checkOriginals().catch(e => console.warn('[gdrive] check', e));
   if (!KV.reconciledOnce) scheduleReconcile(3000);
 }
 function merge(remote){
@@ -491,9 +492,22 @@ const PENDING = new Set();          /* まだ Drive に送ってない原本 */
 const OBJ = new Map();              /* assetId → この端末で見るためのURL */
 const objUrl = (id, blob) => { let u = OBJ.get(id); if (!u) { u = URL.createObjectURL(blob); OBJ.set(id, u); } return u; };
 const fileDoc = id => docOf('_files/' + id);
+/* Safariは「ファイルの一部を切り出したもの」をそのまま保存・送信すると、元のファイル全体になってしまうことがある。
+   なので、保存や送信の前に中身を読み出して、独立したデータにしておく */
+const SOLID_MAX = 64 * 1024 * 1024;
+async function solid(blob, type){
+  const t = type || blob.type || '';
+  if (blob.size > SOLID_MAX) return blob;
+  return new Blob([await blob.arrayBuffer()], {type: t});
+}
+const BROKEN = new Set();           /* Driveの原本が壊れてる（大きさが記録と違う）もの */
 async function storeBlob(id, blob, type, pending){
-  try { await idbPut('blobs', id, {blob, type: type || blob.type || '', pending: !!pending, at: Date.now(), size: blob.size}); }
+  const want = blob.size;
+  blob = await solid(blob, type);
+  try { await idbPut('blobs', id, {blob, type: type || blob.type || '', pending: !!pending, at: Date.now(), size: want}); }
   catch(e){ throw quotaErr(e); }
+  const back = await idbGet('blobs', id).catch(() => null);
+  if (back && back.blob && back.blob.size !== want) { await idbDel('blobs', id).catch(() => {}); const e = new Error('この端末に正しく保存できなかった'); e.code = 'store'; throw e; }
   if (pending) PENDING.add(id);
 }
 async function addAsset(id, blob, type){
@@ -522,9 +536,15 @@ async function pumpNow(){
       const f = fileDoc(id);
       if (!rec || !f) { PENDING.delete(id); if (rec) await idbDel('blobs', id); continue; }
       if (!f.f) {
+        if (f.size && rec.blob.size !== f.size) { console.warn('[gdrive] この端末の原本の大きさが合わない', id); continue; }
+        const body = await solid(rec.blob, rec.type);
         const meta = {name: id + extOf(rec.type), mimeType: rec.type || 'application/octet-stream', parents: [KV.inboxId], appProperties: {aid: id}};
         const ex = await byProp('aid', id);          /* 前に送りかけて記録だけ残ってない場合 */
-        const r = ex || await uploadNew(rec.blob, meta);
+        let r = ex || await uploadNew(body, meta);
+        if (f.size && r && r.size != null && +r.size !== f.size) {      /* 届いた大きさが違う → 送り直す */
+          r = Object.assign({}, r, await putContent(r.id, body, meta.mimeType));
+          if (r.size != null && +r.size !== f.size) throw new Error('Driveに画像を正しく送れなかった');
+        }
         writeLocal('_files/' + id, Object.assign({}, fileDoc(id), {f: r.id}), true); n++;
       }
       rec.pending = false; await idbPut('blobs', id, rec); PENDING.delete(id); setState();
@@ -542,13 +562,18 @@ function resolveAsset(id){
   if (RES.has(id)) return RES.get(id);
   const p = (async () => {
     const rec = await idbGet('blobs', id).catch(() => null);
-    if (rec && rec.blob) { if (!rec.pending) { rec.at = Date.now(); idbPut('blobs', id, rec).catch(() => {}); } return objUrl(id, rec.blob); }
-    const f = fileDoc(id); if (!f || !f.f || !tokenValid() || !navigator.onLine) return null;
+    const f = fileDoc(id);
+    if (rec && rec.blob) {
+      if (rec.pending || !f || !f.size || rec.blob.size === f.size) { if (!rec.pending) { rec.at = Date.now(); idbPut('blobs', id, rec).catch(() => {}); } return objUrl(id, rec.blob); }
+      await idbDel('blobs', id).catch(() => {});      /* 壊れた写し → 捨ててDriveから取り直す */
+    }
+    if (!f || !f.f || !tokenValid() || !navigator.onLine) return null;
     if (dlActive >= 3) await new Promise(r => dlWait.push(r));
     dlActive++;
     try {
       const r = await api('GET', 'files/' + f.f, {query: {alt: 'media'}, raw: true});
       let b = await r.blob(); if (!b.type && f.mime) b = new Blob([b], {type: f.mime});
+      if (f.size && b.size !== f.size) { BROKEN.add(id); setState(); return null; }   /* Driveの原本が壊れてる */
       await storeBlob(id, b, f.mime, false).catch(() => {});
       trimCache();
       return objUrl(id, b);
@@ -566,6 +591,54 @@ async function trimCache(){
     let total = all.reduce((s, [, r]) => s + (r.size || 0), 0);
     for (const [id, r] of all) { if (total <= CACHE_CAP) break; await idbDel('blobs', id); total -= r.size || 0; const u = OBJ.get(id); if (u) { URL.revokeObjectURL(u); OBJ.delete(id); } }
   } catch(e){}
+}
+
+/* ---------- 原本の点検と修理：Driveの原本の大きさが記録と違うものを見つけて、正しい中身に差し替える ---------- */
+let checkAt = 0, checkP = null;
+function checkOriginals(force){
+  if (checkP) return checkP;
+  if (!tokenValid() || !navigator.onLine) return Promise.resolve(BROKEN.size);
+  if (!force && Date.now() - checkAt < 30 * 60e3) return Promise.resolve(BROKEN.size);
+  checkAt = Date.now();
+  checkP = (async () => {
+    await ensureAccount(); await ensureRoot();
+    const files = await listFiles('trashed=false');
+    const size = new Map(files.map(x => [x.id, x.size]));
+    BROKEN.clear();
+    for (const [p, e] of DOCS) {
+      if (!p.startsWith('_files/') || e.d || !e.v || !e.v.f || !e.v.size) continue;
+      const sz = size.get(e.v.f);
+      if (sz != null && +sz !== e.v.size) BROKEN.add(p.slice(7));
+    }
+    setState();
+    return BROKEN.size;
+  })().finally(() => { checkP = null; });
+  return checkP;
+}
+/* source(大きさ, 種類) → 正しい中身（バックアップzipなどから）。この端末に正しい写しがあればそれを使う */
+async function repairOriginals(source, onStep){
+  if (!tokenValid()) throw authErr();
+  await checkOriginals(true);
+  const ids = [...BROKEN]; let fixed = 0, miss = 0, k = 0;
+  for (const id of ids) {
+    k++; try { onStep && onStep(k, ids.length); } catch(e){}
+    const f = fileDoc(id); if (!f || !f.f) { BROKEN.delete(id); continue; }
+    let b = null;
+    const rec = await idbGet('blobs', id).catch(() => null);
+    if (rec && rec.blob && rec.blob.size === f.size) b = rec.blob;
+    if (!b && source) b = await Promise.resolve(source(f.size, f.mime)).catch(() => null);
+    if (!b || b.size !== f.size) { miss++; continue; }
+    b = await solid(b, f.mime);
+    const r = await putContent(f.f, b, f.mime || b.type);
+    if (r && r.size != null && +r.size !== f.size) { miss++; continue; }
+    await storeBlob(id, b, f.mime, false).catch(() => {});
+    const u = OBJ.get(id); if (u) { URL.revokeObjectURL(u); OBJ.delete(id); }
+    writeLocal('_files/' + id, Object.assign({}, f, {fx: Date.now()}), true);     /* ほかの端末に「取り直して」と知らせる */
+    BROKEN.delete(id); fixed++; setState();
+  }
+  scheduleSync(300);
+  try { window.dispatchEvent(new CustomEvent('gdrive-assets')); } catch(e){}
+  return {fixed, miss, total: ids.length};
 }
 
 /* ---------- 仕分け：原本をフォルダへ。ほかの場所にはショートカット ---------- */
@@ -779,8 +852,8 @@ const READY = (async () => {
 })();
 
 window.__gdrive = {
-  get state(){ return {mode: ST.mode, err: ST.err, pending: PENDING.size, lastSync: KV.lastSync || 0, email: KV.account || KV.email || '', connected: tokenValid(), rootId: KV.rootId || '', quota: KV.quota || null}; },
-  connect, signOut, listBackups, restoreBackup,
+  get state(){ return {mode: ST.mode, err: ST.err, pending: PENDING.size, broken: BROKEN.size, lastSync: KV.lastSync || 0, email: KV.account || KV.email || '', connected: tokenValid(), rootId: KV.rootId || '', quota: KV.quota || null}; },
+  connect, signOut, listBackups, restoreBackup, checkOriginals, repairOriginals,
   syncNow: () => { if (!tokenValid()) return Promise.resolve(); return sync().then(() => { pumpUploads(); scheduleReconcile(500); }); },
   folderUrl: () => KV.rootId ? 'https://drive.google.com/drive/folders/' + KV.rootId : 'https://drive.google.com/',
   ping: () => setState(),
