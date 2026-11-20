@@ -169,6 +169,40 @@ button,.char-card,.memo-card,.chat-item,.wk-row,.p-card,.p-sep,.dg-node,.cs-b,.i
 .ft-hit{stroke:transparent;stroke-width:24;cursor:pointer}
 .ft-dot{fill:var(--sub);cursor:pointer}
 .ft-ulb{font-size:12px;fill:var(--sub);cursor:pointer}
+.pv{position:fixed;inset:0;z-index:65;background:var(--bg);display:flex;flex-direction:column;-webkit-user-select:text;user-select:text}
+.pv-bar{display:flex;align-items:center;gap:4px;padding:calc(env(safe-area-inset-top) + 4px) 6px 4px;border-bottom:1px solid var(--line);background:var(--bg)}
+.pv-t{flex:1;min-width:0;font-weight:700;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pv-pg{font-size:12px;color:var(--sub);font-variant-numeric:tabular-nums;flex:none}
+.pv-b{flex:none;border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:7px 11px;font-size:14px;color:inherit;-webkit-user-select:none;user-select:none}
+.pv-b.sm{padding:3px 8px;font-size:12px}
+.pv-find{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--line)}
+.pv-find[hidden]{display:none}
+.pv-find .inp{flex:1;min-width:0}
+.pv-cnt{font-size:12px;color:var(--sub);flex:none;max-width:9em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pv-note{font-size:12px;line-height:1.6;color:var(--sub);padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--line)}
+.pv-note[hidden]{display:none}
+.pv-body{flex:1;overflow:auto;-webkit-overflow-scrolling:touch;padding:8px;background:#8a8580}
+.pv-msg{color:#fff;text-align:center;padding:40px 16px;line-height:1.8}
+.pv-page{position:relative;margin:0 auto 8px;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.3)}
+.pv-page canvas{position:absolute;left:0;top:0;display:block}
+.pv-pn{position:absolute;left:50%;top:40%;transform:translate(-50%,-50%);color:#bbb;font-size:28px}
+.pv-tools{display:flex;align-items:center;gap:6px;padding:6px 8px calc(env(safe-area-inset-bottom) + 6px);border-top:1px solid var(--line);background:var(--bg)}
+.pv-text{background:var(--panel);border-radius:8px;padding:4px 14px;max-width:760px;margin:0 auto;line-height:1.75}
+.pv-tpage{padding:10px 0;border-bottom:1px solid var(--line)}
+.pv-tn{display:flex;align-items:center;justify-content:space-between;color:var(--sub);font-size:12px;margin-bottom:6px;-webkit-user-select:none;user-select:none}
+.pv-txt{white-space:pre-wrap;word-break:break-word}
+.pv-none{color:var(--sub);font-size:13px}
+mark.pv-hit{background:#ffe27a;color:inherit;border-radius:2px}
+mark.pv-cur{background:#ff9d3b}
+.textLayer{position:absolute;text-align:initial;inset:0;overflow:clip;opacity:1;line-height:1;-webkit-text-size-adjust:none;text-size-adjust:none;forced-color-adjust:none;transform-origin:0 0;z-index:1;--min-font-size:1;--text-scale-factor:calc(var(--total-scale-factor) * var(--min-font-size));--min-font-size-inv:calc(1 / var(--min-font-size));--scale-round-x:1px;--scale-round-y:1px}
+.textLayer :is(span,br){color:transparent;position:absolute;white-space:pre;cursor:text;transform-origin:0% 0%}
+.textLayer span{font-size:calc(var(--text-scale-factor) * var(--font-height));transform:rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv))}
+.textLayer span.markedContent{top:0;height:0}
+.textLayer ::selection{background:rgba(0,90,255,.3)}
+.textLayer br::selection{background:transparent}
+.textLayer .endOfContent{display:block;position:absolute;inset:100% 0 0;z-index:0;cursor:default;-webkit-user-select:none;user-select:none}
+.textLayer span.pv-hit{background:rgba(255,214,0,.45);border-radius:2px}
+.textLayer span.pv-cur{background:rgba(255,120,0,.55)}
 .ft-empty{position:absolute;left:50%;top:40%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:14px;text-align:center;color:var(--sub);font-size:14px;width:min(320px,86%)}
 .fam-add{padding:6px 12px;color:var(--sub);text-align:left;font-size:18px;width:100%;border-top:1px solid var(--line)}
 .fam-add:first-child{border-top:0}
@@ -3188,11 +3222,9 @@ A.refMenu = async () => {
 };
 function pdfUrl(a){ return S.assetUrl[a] || (S.assets && S.assets.link && S.assets.link(a)) || '/_blob/' + a; }
 document.addEventListener('click', ev => {
-  const a = ev.target.closest('a[data-pdf]'); if (!a || !(S.assets && S.assets.resolve)) return;
+  const a = ev.target.closest('a[data-pdf]'); if (!a) return;
   const r = curRef(); const f = r && refFiles(r)[+a.dataset.pdf]; if (!f) return;
-  const link = S.assets.link && S.assets.link(f.a); if (link) { a.href = link; return; }
-  ev.preventDefault(); const win = window.open('', '_blank');
-  S.assets.resolve(f.a).then(u => { if (u && win) win.location.href = u; else { if (win) win.close(); toast('まだDriveに送れてない。つながったらもう一度開いてね'); } });
+  ev.preventDefault(); openPdfViewer(f.a, f.name);
 }, true);
 A.pdfAdd = async () => {
   if (!S.assets) { toast('ここではファイルのアップロードが使えない'); return; }
@@ -5529,6 +5561,181 @@ A.dgAdd = () => {
   });
 };
 
+/* ===== PDFをアプリの中で読む：文字の検索・文字の選択（コピー・翻訳）つき ===== */
+const PV_ZOOMS = [1, 1.5, 2, 3];
+function pvTextOf(tc){
+  /* 文字のかたまりを、行と空白を考えながらつなぐ */
+  let out = '', prev = null;
+  const cjk = ch => /[　-鿿＀-￯]/.test(ch || '');
+  for (const it of tc.items || []) {
+    if (typeof it.str !== 'string') continue;
+    const s = it.str; const t = it.transform || [1, 0, 0, 1, 0, 0]; const h = it.height || Math.hypot(t[2], t[3]) || 10;
+    if (prev && s) {
+      const pt = prev.transform || t; const dy = Math.abs(t[5] - pt[5]);
+      if (!prev.hasEOL && dy > h * 0.6) out += '\n';
+      else if (!prev.hasEOL) {
+        const gap = t[4] - (pt[4] + (prev.width || 0));
+        const a = out.slice(-1), b = s[0];
+        if (gap > h * 0.18 && a && !/\s/.test(a) && !/\s/.test(b) && !(cjk(a) && cjk(b))) out += ' ';
+      }
+    }
+    out += s; if (it.hasEOL) out += '\n';
+    if (s || it.hasEOL) prev = it;
+  }
+  return out.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+const pvNorm = s => String(s || '').toLowerCase().replace(/\s+/g, ' ');
+async function openPdfViewer(id, name){
+  if (!id) return;
+  const ov = document.createElement('div'); ov.className = 'pv';
+  const kept = !!(S.assets && S.assets.kept && S.assets.kept(id));
+  ov.innerHTML = `<div class="pv-bar"><button class="ib" data-pv="close" aria-label="閉じる">‹</button><div class="pv-t">${esc(name || 'PDF')}</div><span class="pv-pg" id="pvPg"></span><button class="pv-b" data-pv="find">検索</button><button class="ib" data-pv="menu" aria-label="メニュー">…</button></div>
+    <div class="pv-find" id="pvFind" hidden><input class="inp" id="pvQ" placeholder="PDFの中を検索" enterkeyhint="search" autocomplete="off"><span class="pv-cnt" id="pvCnt"></span><button class="pv-b" data-pv="prev" aria-label="前へ">↑</button><button class="pv-b" data-pv="next" aria-label="次へ">↓</button></div>
+    <div class="pv-note" id="pvNote" hidden></div>
+    <div class="pv-body" id="pvBody"><div class="pv-msg">読み込み中…</div></div>
+    <div class="pv-tools"><button class="pv-b" data-pv="mode" id="pvMode">文字だけ</button><span class="grow1"></span><button class="pv-b" data-pv="zo" aria-label="小さく">－</button><button class="pv-b" data-pv="zi" aria-label="大きく">＋</button></div>`;
+  document.body.appendChild(ov);
+  const $o = sel => ov.querySelector(sel);
+  const body = $o('#pvBody');
+  const st = {id, name, doc: null, lib: null, N: 0, zoom: 0, mode: 'page', sizes: [], tc: new Map(), txt: new Map(), live: new Map(), hits: [], hi: -1, q: '', qtok: 0, closed: false, kept};
+  const close = () => { st.closed = true; try { st.io && st.io.disconnect(); } catch(e){} try { st.doc && st.doc.destroy(); } catch(e){} ov.remove(); };
+  ov.addEventListener('click', async ev => {
+    const b = ev.target.closest('[data-pv]'); if (!b) return; const k = b.dataset.pv;
+    if (k === 'close') close();
+    else if (k === 'find') { const f = $o('#pvFind'); f.hidden = !f.hidden; if (!f.hidden) $o('#pvQ').focus(); }
+    else if (k === 'next' || k === 'prev') pvStep(k === 'next' ? 1 : -1);
+    else if (k === 'zi' || k === 'zo') { const z = clamp(st.zoom + (k === 'zi' ? 1 : -1), 0, PV_ZOOMS.length - 1); if (z !== st.zoom) { st.zoom = z; pvLayout(true); } }
+    else if (k === 'mode') { st.mode = st.mode === 'page' ? 'text' : 'page'; $o('#pvMode').textContent = st.mode === 'page' ? '文字だけ' : 'ページ'; pvLayout(true); }
+    else if (k === 'copy') { const n = +b.dataset.n; const t = st.txt.get(n) || ''; try { await navigator.clipboard.writeText(t); toast(`${n}ページの文字をコピーした`); } catch(e){ toast('コピーできなかった。文字を長押しして選んでね'); } }
+    else if (k === 'drive') { const l = S.assets && S.assets.link && S.assets.link(id); if (l) window.open(l, '_blank'); }
+    else if (k === 'menu') {
+      const opts = [].concat(
+        S.assets && S.assets.keep ? [{k: 'keep', label: st.kept ? 'この端末に保存しておく ✓' : 'この端末に保存しておく', desc: st.kept ? 'ネットがなくても読める（タップで解除）' : 'ネットがなくても読めるように'}] : [],
+        st.N ? [{k: 'go', label: 'ページへ移動', desc: `1〜${st.N}`}] : [],
+        S.assets && S.assets.link && S.assets.link(id) ? [{k: 'drive', label: 'Google Driveで開く', desc: 'スキャンしたPDFの文字読み取りはこっち'}] : []);
+      const c = await choose(name || 'PDF', opts); if (!c) return;
+      if (c === 'keep') { st.kept = !st.kept; await S.assets.keep(id, st.kept); toast(st.kept ? 'この端末に保存した。ネットがなくても読める' : '保存を解除した（Driveには残ってる）'); }
+      else if (c === 'go') { const v = await ask('ページ', '', {placeholder: `1〜${st.N}`}); const n = toInt(v); if (n) pvGo(clamp(n, 1, st.N)); }
+      else if (c === 'drive') { const l = S.assets.link(id); if (l) window.open(l, '_blank'); }
+    }
+  });
+  let qt = null;
+  $o('#pvQ').addEventListener('input', () => { clearTimeout(qt); qt = setTimeout(() => pvSearch($o('#pvQ').value), 350); });
+  $o('#pvQ').addEventListener('keydown', ev => { if (ev.key === 'Enter' && !ev.isComposing) { ev.preventDefault(); clearTimeout(qt); if (pvNorm($o('#pvQ').value).trim() === st.q && st.hits.length) pvStep(1); else pvSearch($o('#pvQ').value); } });
+  body.addEventListener('scroll', () => pvPageInd(), {passive: true});
+  /* ---- 読み込み ---- */
+  let blob = null;
+  try { blob = await fetchAsset(id, /pdf|octet|^$/); } catch(e){}
+  if (st.closed) return;
+  if (!blob) { body.innerHTML = `<div class="pv-msg">PDFを読み込めなかった。<br>ネットにつながってるか確かめてね。${S.assets && S.assets.link && S.assets.link(id) ? '<br><br><button class="btn" data-pv="drive">Google Driveで開く</button>' : `<br><br><a class="btn" href="${esc(pdfUrl(id))}" target="_blank" rel="noopener">別のタブで開く</a>`}</div>`; return; }
+  try {
+    st.lib = await loadPdfjs();
+    st.doc = await st.lib.getDocument({data: new Uint8Array(await blob.arrayBuffer()), isEvalSupported: false}).promise;
+  } catch(e){ body.innerHTML = `<div class="pv-msg">このPDFは開けなかった（${esc(String(e && e.message || e).slice(0, 60))}）</div>`; return; }
+  if (st.closed) { try { st.doc.destroy(); } catch(e){} return; }
+  st.N = st.doc.numPages;
+  const p1 = await st.doc.getPage(1); const v1 = p1.getViewport({scale: 1});
+  st.base = {w: v1.width, h: v1.height};
+  pvLayout(false);
+  /* ---- 内側の関数 ---- */
+  function pvSize(n){ return st.sizes[n] || st.base; }
+  function pvWidth(){ return Math.max(200, body.clientWidth - 16) * PV_ZOOMS[st.zoom]; }
+  function pvLayout(keep){
+    const cur = keep ? pvCurPage() : 1;
+    try { st.io && st.io.disconnect(); } catch(e){}
+    st.live.clear();
+    const W = pvWidth();
+    if (st.mode === 'page') body.innerHTML = Array.from({length: st.N}, (_, i) => { const n = i + 1, z = pvSize(n); return `<div class="pv-page" data-n="${n}" style="width:${W}px;height:${Math.round(W * z.h / z.w)}px"><div class="pv-pn">${n}</div></div>`; }).join('');
+    else body.innerHTML = `<div class="pv-text" style="font-size:${Math.round(15 * PV_ZOOMS[st.zoom])}px">${Array.from({length: st.N}, (_, i) => `<div class="pv-tpage" data-n="${i + 1}"><div class="pv-tn"><span>${i + 1}ページ</span><button class="pv-b sm" data-pv="copy" data-n="${i + 1}">このページをコピー</button></div><div class="pv-txt">…</div></div>`).join('')}</div>`;
+    st.io = new IntersectionObserver(es => { for (const e of es) { const n = +e.target.dataset.n; if (e.isIntersecting) pvShow(n, e.target); } }, {root: body, rootMargin: '120% 0px'});
+    body.querySelectorAll('[data-n]').forEach(el => { if (el.classList.contains('pv-page') || el.classList.contains('pv-tpage')) st.io.observe(el); });
+    if (cur > 1) pvGo(cur, true);
+    pvPageInd();
+  }
+  async function pvText(n){
+    if (st.tc.has(n)) return st.tc.get(n);
+    const pg = await st.doc.getPage(n); const tc = await pg.getTextContent();
+    st.tc.set(n, tc); st.txt.set(n, pvTextOf(tc)); return tc;
+  }
+  async function pvShow(n, el){
+    if (st.live.has(n) || st.closed) return; st.live.set(n, el);
+    if (st.mode === 'text') {
+      await pvText(n); if (st.closed || !el.isConnected) return;
+      const t = st.txt.get(n);
+      el.querySelector('.pv-txt').innerHTML = t ? pvMark(esc(t)) : '<span class="pv-none">（このページには文字のデータがない。スキャンした画像のページかも）</span>';
+      const h = st.hits[st.hi]; if (h && h.n === n) pvCur();
+      return;
+    }
+    /* 見えるページだけ描く。遠くのページは消してメモリを空ける */
+    if (st.live.size > 8) { const cur = pvCurPage(); [...st.live.keys()].sort((a, b) => Math.abs(b - cur) - Math.abs(a - cur)).slice(0, st.live.size - 8).forEach(m => { const x = st.live.get(m); st.live.delete(m); if (x && x.isConnected) { x.querySelectorAll('canvas,.textLayer').forEach(c => { if (c.tagName === 'CANVAS') { c.width = 0; c.height = 0; } c.remove(); }); } }); }
+    const pg = await st.doc.getPage(n); if (st.closed || !el.isConnected) return;
+    const v0 = pg.getViewport({scale: 1}); st.sizes[n] = {w: v0.width, h: v0.height};
+    const W = pvWidth(), s = W / v0.width, vp = pg.getViewport({scale: s});
+    el.style.height = Math.round(vp.height) + 'px';
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const cv = document.createElement('canvas'); cv.width = Math.floor(vp.width * dpr); cv.height = Math.floor(vp.height * dpr); cv.style.width = vp.width + 'px'; cv.style.height = vp.height + 'px';
+    el.appendChild(cv);
+    try { await pg.render({canvasContext: cv.getContext('2d'), viewport: vp, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null}).promise; } catch(e){ return; }
+    if (st.closed || !el.isConnected || st.live.get(n) !== el) return;
+    const tl = document.createElement('div'); tl.className = 'textLayer'; tl.style.setProperty('--total-scale-factor', s);
+    el.appendChild(tl);
+    try { const tc = await pvText(n); await new st.lib.TextLayer({textContentSource: tc, container: tl, viewport: vp}).render(); } catch(e){}
+    pvHiPage(n, el);
+  }
+  function pvCurPage(){
+    const top = body.scrollTop + Math.min(body.clientHeight * 0.35, 260); let n = 1;
+    for (const el of body.querySelectorAll('.pv-page,.pv-tpage')) { if (el.offsetTop + el.offsetHeight > top) { n = +el.dataset.n; break; } }
+    return n;
+  }
+  function pvPageInd(){ const e = $o('#pvPg'); if (e && st.N) e.textContent = `${pvCurPage()} / ${st.N}`; }
+  function pvGo(n, instant){ const el = body.querySelector(`[data-n="${n}"].pv-page, [data-n="${n}"].pv-tpage`); if (el) { body.scrollTop = el.offsetTop - 8; pvPageInd(); } }
+  /* ---- 検索 ---- */
+  async function pvSearch(raw){
+    const q = pvNorm(raw).trim(); st.q = q; st.hits = []; st.hi = -1; const tok = ++st.qtok;
+    const cnt = $o('#pvCnt'), note = $o('#pvNote');
+    pvRehi();
+    if (!q) { cnt.textContent = ''; note.hidden = true; return; }
+    let any = false;
+    for (let n = 1; n <= st.N; n++) {
+      if (tok !== st.qtok || st.closed) return;
+      await pvText(n);
+      const t = pvNorm(st.txt.get(n)); if (t.trim()) any = true;
+      let i = t.indexOf(q); while (i >= 0) { st.hits.push({n, i}); i = t.indexOf(q, i + q.length); }
+      if (n % 10 === 0 || n === st.N) cnt.textContent = n < st.N ? `検索中 ${n}/${st.N}（${st.hits.length}件）` : `${st.hits.length}件`;
+      if (st.hits.length && st.hi < 0) { st.hi = 0; pvJump(); }
+    }
+    if (tok !== st.qtok) return;
+    if (!any) { note.hidden = false; note.innerHTML = 'このPDFには文字のデータがない（スキャンした画像のPDF）。検索や文字の選択はできない。…の「Google Driveで開く」から「Googleドキュメントで開く」をすると、文字を読み取れる。'; }
+    else note.hidden = true;
+    cnt.textContent = st.hits.length ? `${st.hi + 1}/${st.hits.length}` : '見つからない';
+  }
+  function pvStep(d){ if (!st.hits.length) return; st.hi = (st.hi + d + st.hits.length) % st.hits.length; $o('#pvCnt').textContent = `${st.hi + 1}/${st.hits.length}`; pvJump(); }
+  function pvJump(){ const h = st.hits[st.hi]; if (!h) return; pvGo(h.n); setTimeout(() => pvRehi(), 60); setTimeout(() => pvRehi(), 600); }
+  function pvMark(html){
+    if (!st.q) return html;
+    const re = new RegExp(st.q.split(' ').map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+'), 'gi');
+    return html.replace(re, m => `<mark class="pv-hit">${m}</mark>`);
+  }
+  function pvRehi(){ for (const [n, el] of st.live) { if (!el.isConnected) continue; if (st.mode === 'page') pvHiPage(n, el); else { const t = st.txt.get(n); const box = el.querySelector('.pv-txt'); if (box && t) box.innerHTML = pvMark(esc(t)); } } pvCur(); }
+  function pvHiPage(n, el){
+    const spans = el.querySelectorAll('.textLayer span');
+    spans.forEach(sp => sp.classList.remove('pv-hit', 'pv-cur'));
+    if (!st.q) return;
+    const words = st.q.split(' ').filter(Boolean); const key = words.sort((a, b) => b.length - a.length)[0];
+    spans.forEach(sp => { const t = pvNorm(sp.textContent); if (t.includes(st.q) || (key && key.length >= 2 && t.includes(key))) sp.classList.add('pv-hit'); });
+    pvCur();
+  }
+  function pvCur(){
+    const h = st.hits[st.hi]; if (!h) return;
+    const el = st.live.get(h.n); if (!el || !el.isConnected) return;
+    el.querySelectorAll('.pv-cur').forEach(x => x.classList.remove('pv-cur'));
+    const before = st.hits.filter((x, i) => x.n === h.n && i < st.hi).length;
+    const marks = el.querySelectorAll(st.mode === 'page' ? '.textLayer span.pv-hit' : 'mark.pv-hit');
+    const m = marks[Math.min(before, marks.length - 1)];
+    if (m) { m.classList.add('pv-cur'); const r = m.getBoundingClientRect(), br = body.getBoundingClientRect(); if (r.top < br.top + 40 || r.bottom > br.bottom - 60) body.scrollTop += r.top - br.top - br.height / 3; if (r.left < br.left || r.right > br.right) body.scrollLeft += r.left - br.left - 30; }
+  }
+}
+
 /* ========== 家系図（相関図の中に作る。家族構成の表はここから自動で作る） ========== */
 const isFT = d => !!d && d.kind === 'family';
 const FT_W = 124, FT_H = 200, FT_M = 260;
@@ -7524,9 +7731,7 @@ function openEpSheet(c, k, it0){
     if (xo) {
       const f = (it.pdfs || [])[+xo.dataset.i]; if (!f) return;
       if (xo.dataset.x === 'pdfRm') { if (!await confirmBox('この元のPDFを外す？\nページの絵はそのまま残る。', '外す', true)) return; it.pdfs.splice(+xo.dataset.i, 1); save(200); paintPdfs(); return; }
-      const link = S.assets && S.assets.link && S.assets.link(f.a); if (link) { window.open(link, '_blank'); return; }
-      const win = window.open('', '_blank'); const u = S.assets && S.assets.resolve ? await S.assets.resolve(f.a) : null;
-      if (u && win) win.location.href = u; else { if (win) win.close(); toast('まだDriveに送れてない。少し待ってからもう一度開いてね'); }
+      openPdfViewer(f.a, f.name || 'PDF');
       return;
     }
     const x = ev.target.closest('[data-x]'); if (!x) return; const kx = x.dataset.x;

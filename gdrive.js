@@ -599,7 +599,8 @@ let trimAt = 0;
 async function trimCache(){
   if (Date.now() - trimAt < 60000) return; trimAt = Date.now();
   try {
-    const all = (await idbAll('blobs')).filter(([, r]) => r && !r.pending).sort((a, b) => (a[1].at || 0) - (b[1].at || 0));
+    const keep = KV.keep || {};
+    const all = (await idbAll('blobs')).filter(([id, r]) => r && !r.pending && !keep[id]).sort((a, b) => (a[1].at || 0) - (b[1].at || 0));
     let total = all.reduce((s, [, r]) => s + (r.size || 0), 0);
     for (const [id, r] of all) { if (total <= CACHE_CAP) break; await idbDel('blobs', id); total -= r.size || 0; const u = OBJ.get(id); if (u) { URL.revokeObjectURL(u); OBJ.delete(id); } }
   } catch(e){}
@@ -859,7 +860,10 @@ const assets = {
   async delete(){},
   has: id => !!fileDoc(id),
   resolve: id => resolveAsset(id),
-  link: id => { const f = fileDoc(id); return f && f.f ? `https://drive.google.com/file/d/${f.f}/view` : null; }
+  link: id => { const f = fileDoc(id); return f && f.f ? `https://drive.google.com/file/d/${f.f}/view` : null; },
+  /* 「この端末に保存しておく」：古いものから消すときに消さない */
+  kept: id => !!(KV.keep && KV.keep[id]),
+  keep: async (id, on) => { KV.keep = Object.assign({}, KV.keep); if (on) KV.keep[id] = 1; else delete KV.keep[id]; saveKV(); if (on) await resolveAsset(id).catch(() => null); return !!on; }
 };
 const user = {isOwner: async () => true, canEdit: async () => true, can: async () => true, id: async () => 'me', me: async () => ({id: 'me', name: KV.name || '', isOwner: true, canEdit: true})};
 const db = {doc: docRef, collection: colRef};
